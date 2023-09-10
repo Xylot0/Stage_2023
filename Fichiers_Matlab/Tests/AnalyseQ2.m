@@ -1,0 +1,296 @@
+clear all;
+Parameters;
+
+%% Loading
+indTarget = 13;
+[target,~,name_target] = LoadStation(name_pred{indTarget},variables,interp,start_of_date,end_of_date,time_interval,start_H,start_M,start_S,end_H,end_M,end_S);
+data_pca = table;
+parfor (i=1:length(name_pred),ncores)
+    if i ~= indTarget
+        [pred,~,name] = LoadStation(name_pred{i},variables,interp,start_of_date,end_of_date,time_interval,start_H,start_M,start_S,end_H,end_M,end_S);
+        cellname = [];
+        for j = 1:length(variables)
+            cellname = name{j};
+            tempTable = table(table2array(pred(:,variables(j))),'VariableNames',{cellname});
+            data_pca = horzcat(data_pca,tempTable);
+        end
+    end
+end
+
+predi_n0 = find(target.data_t == prediction_t0);
+predi_N = length(target.data_t);
+
+target_n0 = predi_n0;
+target_N = predi_N;
+
+data_pca_av = CheckAvailabilityV2(data_pca,0.85);
+X = table2array(data_pca_av);
+y = target.(aim);
+X_train = X(1:predi_n0-1,:);
+y_train = y(1:predi_n0-1,:);
+
+nan_indices = any(isnan([X_train, y_train]),2);
+X_train(nan_indices,:) = [];
+y_train(nan_indices,:) = [];
+
+Q3 = zeros(1,size(X_train,2));
+
+CV = plscv(X_train,y_train,size(X_train,2),10,'center');
+RESS = CV.RESS;
+for k = 1:size(X_train,2)
+    PLS = pls(X_train,y_train,k,'center');
+    PRESS(k) = sum((PLS.y_fit - y_train).^2);
+    
+    % Q² (Cross-validation)
+%     if k == 1
+%         Q3(k) = 1 - PRESS(1)/(size(X_train,2)*(size(X_train,1)-1));
+%     else
+%         Q3(k) = 1 - PRESS(k)/RESS(k-1);
+%     end
+    
+    % Tests sur les résiduels
+%     b(:,k) = PLS.regcoef_pretreat;
+%     mo = b(2:end) - b(1:end-1);
+%     zcp = sum(sign(mo(2:end)) ~= sign(mo(1:end-1)));
+%     
+%     mf = norm(b) / (norm(mo)*zcp);
+%     MF(k) = log(mf);
+%     
+    % RMSECV (Cross-validation)
+%     RMSE(k) = sqrt(PRESS(k)/size(X_train,1));
+%     RMSECV(k) = CV.RMSECV(k);
+    
+%     % Covariance tests
+%     T = PLS.X_scores;
+%     S(k) = cov(T'*PLS.y_fit);
+%     
+    
+%     % Critères AIC et BIC
+    DoF(k) = size(X_train,1) - k;
+%     AIC(k) = PLS.SSE / size(X_train,1) + 2 * DoF(k) * (PLS.SSE / (DoF(k) - 1))^2 / size(X_train,1);
+    BIC(k) = PLS.SSE / size(X_train,1) + log(size(X_train,1)) * DoF(k) * (PLS.SSE / (DoF(k)-1))^2 / size(X_train,1);
+end
+
+%% Calcul des VIP
+[XL,yl,XS,YS,beta,PCTVAR,MSE,stats] = plsregress(X_train,y_train,size(X_train,2));
+
+W0 = stats.W ./ sqrt(sum(stats.W.^2,1));
+p = size(XL,1);
+sumSq = sum(XS.^2,1).*sum(yl.^2,1);
+vipScore = sqrt(p * sum(sumSq.*(W0.^2),2) ./ sum(sumSq,2));
+
+% plot(1:size(X_train,2),b(:,1),'r','Linewidth',2);
+% hold on
+% plot(1:size(X_train,2),b(:,3),'g','Linewidth',2);
+% hold on
+% plot(1:size(X_train,2),b(:,6),'y','Linewidth',2);
+% hold on
+% plot(1:size(X_train,2),b(:,9),'b','Linewidth',2);
+% legend("1 LV", "3 LVs", "6 LVs", "9 LVs");
+% Wold's R & Osten's F
+% Wolds_R = PRESS(2:end) ./ PRESS(1:end-1);
+% Wolds_R = [Wolds_R Wolds_R(end)];
+
+Ostens_Fup = PRESS(1:end-1) - PRESS(2:end);
+Ostens_Fdn = (PRESS(2:end)) ./ (-1*([2:size(X_train,2)] - size(X_train,1)));
+Ostens_F = Ostens_Fup ./ Ostens_Fdn;
+Ostens_F = [Ostens_F Ostens_F(end)];
+
+% % DW
+% B = ((b(2:end,:) - b(1:end-1,:)).^2);
+% C = (b.^2);
+% DW = (sum(B,1) ./ sum(C,1));
+% 
+% for k = 1:size(X_train,2)-1
+%     for i = 1:size(X_train,1)
+%         d(i,k) = CV.predError(i,k).^2 - CV.predError(i,k+1).^2;
+%     end
+%     D(k) = sum(d(:,k)) / size(X_train,1);
+%     [h,p,ci,stats] = ttest(d(:,k));
+%     H(k) = h;
+% end
+
+%% Courbes de AIC et BIC
+% % figure;
+% 
+% subplot(2,3,1);
+% plot(1:size(X_train,2),AIC,'b-p','Linewidth',2);
+% title("WSPD/GST");
+% xlabel("# Latent Variables");
+% ylabel("AIC");
+% 
+% subplot(2,3,4);
+% plot(1:size(X_train,2),BIC,'b-p','Linewidth',2);
+% title("WSPD/GST");
+% xlabel("# Latent Variables");
+% ylabel("BIC");
+
+% subplot(2,3,2);
+% plot(1:size(X_train,2),AIC,'b-p','Linewidth',2);
+% title("ATMP");
+% xlabel("# Latent Variables");
+% ylabel("AIC");
+% 
+% subplot(2,3,5);
+% plot(1:size(X_train,2),BIC,'b-p','Linewidth',2);
+% title("ATMP");
+% xlabel("# Latent Variables");
+% ylabel("BIC");
+
+% subplot(2,3,3);
+% plot(1:size(X_train,2),AIC,'b-p','Linewidth',2);
+% title("PRES");
+% xlabel("# Latent Variables");
+% ylabel("AIC");
+% 
+% subplot(2,3,6);
+% plot(1:size(X_train,2),BIC,'b-p','Linewidth',2);
+% title("PRES");
+% xlabel("# Latent Variables");
+% ylabel("BIC");
+
+
+%% Courbes des résiduels
+
+% figure;
+% 
+% subplot(1,3,1);
+% plot(1:size(X_train,2),RMSECV,'b-p','Linewidth',2);
+% title("WSPD/GST");
+% ylabel("RMSECV");
+% xlabel("# Latent Variables");
+
+
+% subplot(1,3,2);
+% plot(1:size(X_train,2),RMSECV,'b-p','Linewidth',2);
+% title("ATMP");
+% ylabel("RMSECV");
+% xlabel("# Latent Variables");
+
+
+% subplot(1,3,3);
+% plot(1:size(X_train,2),RMSECV,'b-p','Linewidth',2);
+% title("PRES");
+% ylabel("RMSECV");
+% xlabel("# Latent Variables");
+
+
+%% Courbes de D (randomised t-tests)
+
+% figure;
+% 
+% subplot(3,1,1);
+% plot(1:size(X_train,2)-1,D,'b-p');
+% title("Randomized t-test (WSPD/GST)");
+% 
+% subplot(3,1,2);
+% plot(1:size(X_train,2)-1,D,'b-p');
+% title("Randomized t-test (ATMP)");
+
+% subplot(3,1,3);
+% plot(1:size(X_train,2)-1,D,'b-p');
+% title("Randomized t-test (PRES)");
+% 
+% xlabel("# Latent variables");
+
+%% Courbes de DW (Durbin-Watson criterion)
+
+% figure;
+% % 
+% subplot(3,1,1);
+% plot(1:size(X_train,2)-1,(DW(1:end-1))/norm(DW(1:end-1)),'b-p','Linewidth',2);
+% title("Durbin-Watson (WSPD/GST)");
+
+% subplot(3,1,2);
+% plot(1:size(X_train,2)-1,(DW(1:end-1))/norm(DW(1:end-1)),'b-p','Linewidth',2);
+% title("Durbin-Watson (ATMP)");
+
+% subplot(3,1,3);
+% plot(1:size(X_train,2)-1,(DW(1:end-1))/norm(DW(1:end-1)),'b-p','Linewidth',2);
+% title("Durbin-Watson (PRES)");
+% 
+% xlabel("# Latent variables");
+
+%% Courbes de WoldR et OstF
+
+% figure;
+% 
+% subplot(3,1,1);
+% plot(1:size(X_train,2),Ostens_F,'b-p','Linewidth',2);
+% title("WSPD/GST");
+% xlabel("# Latent variables");
+% ylabel("F");
+
+% subplot(3,1,2);
+% plot(1:size(X_train,2),Ostens_F, 'b-p','Linewidth',2);
+% title("ATMP");
+% xlabel("# Latent variables");
+% ylabel("F");
+% 
+% subplot(3,1,3);
+% plot(1:size(X_train,2),Ostens_F, 'b-p','Linewidth',2);
+% title("PRES");
+% xlabel("# Latent variables");
+% ylabel("F");
+
+% figure;
+
+% subplot(3,1,1);
+% plot(1:size(X_train,2),Wolds_R,'b-p','Linewidth',2);
+% title("WSPD/GST");
+% xlabel("# Latent variables");
+% ylabel("R");
+
+% subplot(3,1,2);
+% plot(1:size(X_train,2),Wolds_R, 'b-p','Linewidth',2);
+% title("ATMP");
+% xlabel("# Latent variables");
+% ylabel("R");
+
+% subplot(3,1,3);
+% plot(1:size(X_train,2),Wolds_R, 'b-p','Linewidth',2);
+% title("PRES");
+% xlabel("# Latent variables");
+% ylabel("R");
+
+% %% Calcul de Q²
+% 
+% % Affichage des courbes de Q
+% figure;
+% 
+% nbColonnes = 10;
+% 
+% indices = 1:nbColonnes;
+% donnees = [Q1(1:10); Q2(1:10); [Q3(1:8) 0 0]];
+% 
+% bar(indices,donnees,'grouped');
+% legende = cell(3,1);
+% legende{1} = 'WSPD/GST';
+% legende{2} = 'ATMP';
+% legende{3} = 'PRES';
+% legend(legende);
+% 
+% xlabel('# Latent Variables');
+% ylabel('Q²');
+% 
+% hold on
+% 
+% %% Calcul de R
+% for p = 1:size(X_train,2)-1
+%     R1(p) = PRESS(p+1)/PRESS(p);
+% end
+% 
+% figure;
+% indices = 1:nbColonnes;
+% donnees = [R1(1:10); R2(1:10); [R3(1:7) 0 0 0]];
+% 
+% bar(indices,donnees,'grouped');
+% legende = cell(3,1);
+% legende{1} = 'WSPD/GST';
+% legende{2} = 'ATMP';
+% legende{3} = 'PRES';
+% legend(legende);
+% 
+% xlabel('# Latent Variables');
+% ylabel('R');
+% ylim([-0.05 1.05]);
